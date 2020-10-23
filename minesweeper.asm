@@ -11,12 +11,7 @@
     b_call(_RunIndicOff)
 
 ;---------------------------------------------------------------------
-    ;JR      Draw
-    LD     HL, picdata
-    LD     DE, PlotSScreen+(19*12)    ;Start at nineteenth row of display
-    LD     BC, 25*12                  ;25 rows of data
-    LDIR                      
-    b_call(_GrBufCpy)
+    JR      Draw
     RET
 
 ;---------------------------------------------------------------------
@@ -72,15 +67,100 @@ Draw:
     b_call(_PutC)           ; print 'o'
     JR      KeyLoop    ; Get another key.
 
-DrawTile:
+
+
+
+
+DrawTile: ; D = index of tile sprite, C = column, A = row
     LD E, B ; Save value of B
+    LD HL, () ; load first tile 
+
     LD B, 12 ; load 12 into B to loop 12 times
-_TileIndexLoop: ; multiplies 
-
+_TileIndexLoop: ; multiplies D by 12 (number of bytes in a row)
+    ADD A, A
     DJNZ _TileIndexLoop
+    ; out of loop
+    LD A, C ; Load columb into A
+    AND 7   ; Mod 8
+    LD B, A ; Set up loop to shift 
+_PixelShiftLoop:
 
-cursorY:
-    .db 4
-cursorX:
-    .db 4
+
+    SRA C
+    SRA C
+    SRA C ; divide by 8 to get the byte number we want to draw to
+
+
+; Usable bytes: 768
+board = AppBackUpScreen ; size = 16 * 12 = 192 bytes
+selector = AppBackUpScreen + 192 ; size = 1 (single byte representing offset of selected tile)
+
+tiles:
+    ; Empty tile
+    .DB %00011111
+    .DB %00011111
+    .DB %00011111
+    .DB %00011111
+    .DB %00011111
+    ; 1
+    .DB %00011111
+    .DB %00011101
+    .DB %00011001
+    .DB %00011101
+    .DB %00011000
+    ; 2
+    .DB %00011111
+    .DB %00011001
+    .DB %00011110
+    .DB %00011001
+    .DB %00011000
+    ; 3
+    .DB %00011111
+    .DB %00010001
+    .DB %00011110
+    .DB %00011100
+    .DB %00010001
+    ; 4
+    .DB %00011111
+    .DB %00010101
+    .DB %00010101
+    .DB %00010000
+    .DB %00011101
+    ; 5
+    .DB %00011111
+    .DB %00011000
+    .DB %00011001
+    .DB %00011110
+    .DB %00011001
+    ; 6
+    .DB %00011111
+    .DB %00011100
+    .DB %00011011
+    .DB %00011000
+    .DB %00011100
+    ; 7
+    .DB %00011111
+    .DB %00011000
+    .DB %00011110
+    .DB %00011101
+    .DB %00011101
+    ; 8
+    .DB %00011111
+    .DB %00011001
+    .DB %00011010
+    .DB %00010101
+    .DB %00011001
+    ; Mine Tile
+    .DB %00011111
+    .DB %00011010
+    .DB %00010001
+    .DB %00011000
+    .DB %00010101
+    ; Flag Tile
+    .DB %00011111
+    .DB %00011001
+    .DB %00011000
+    .DB %00011011
+    .DB %00010001
+
 .END
