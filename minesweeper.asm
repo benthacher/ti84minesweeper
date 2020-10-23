@@ -73,7 +73,9 @@ Draw:
 
 DrawTile: ; D = index of tile sprite, C = column, A = row
     LD E, B ; Save value of B
-    LD HL, () ; load first tile 
+    LD HL, (tiles) ; load first tile 
+    
+
 
     LD B, 12 ; load 12 into B to loop 12 times
 _TileIndexLoop: ; multiplies D by 12 (number of bytes in a row)
@@ -96,7 +98,7 @@ board = AppBackUpScreen ; size = 16 * 12 = 192 bytes
 selector = AppBackUpScreen + 192 ; size = 1 (single byte representing offset of selected tile)
 
 tiles:
-    ; Empty tile
+    ; Empty tile (0)
     .DB %00011111
     .DB %00011111
     .DB %00011111
@@ -150,17 +152,23 @@ tiles:
     .DB %00011010
     .DB %00010101
     .DB %00011001
-    ; Mine Tile
+    ; Mine Tile (9)
     .DB %00011111
     .DB %00011010
     .DB %00010001
     .DB %00011000
     .DB %00010101
-    ; Flag Tile
+    ; Flag Tile (10)
     .DB %00011111
     .DB %00011001
     .DB %00011000
     .DB %00011011
     .DB %00010001
+    ; Covered Tile (11)
+    .DB %00011111
+    .DB %00010000
+    .DB %00010000
+    .DB %00010000
+    .DB %00010000
 
 .END
