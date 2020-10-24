@@ -1,102 +1,155 @@
 #INCLUDE "./includes/ti83plus.inc"
+
 #define MINEBIT 4
 #define COVEREDBIT 5
 #define FLAGBIT 6
-#define TILE_SIZE 5
 
+#define TILE_SIZE 5
+#define BOARD_SIZE 192
+
+#define MINE_TILE 9
+#define FLAG_TILE 10
+#define EMPTY_TILE 11
+#define COVERED_TILE 12
+
+#define IS_RUNNING 0
+#define LOST
 
 .ORG    $9D93
 .DB     t2ByteTok, tAsmCmp ;I have no clue why but it breaks without this line
 
+;----------------------------- MAIN --------------------------
     b_call(_RunIndicOff)
-
-;---------------------------------------------------------------------
 
     ; Clear screen
     LD BC, 12*64
     LD HL, PlotSScreen
-_ClearScreen:
+ClearScreen:
     DEC BC
     LD (HL), 0
     INC HL
     LD A, B
     OR C
-    JR NZ, _ClearScreen
+    JR NZ, ClearScreen
     b_call(_GrBufCpy)
+
+    LD IX, board ; Load board address into index register
+    LD C, 0         ; Index of mine in board list
+InitializeLoop:
+    ; C = index
+    LD (IX), 0 ; set the tile data at IX to zero
+    SET COVEREDBIT, (IX) ; cover the tile at IX
+
+    CALL RowAndColFromIndex ; D and E are now tile row and col
+    ; Get Random number
+    CALL Random ; Random number stored in A
+    CP 30 ; test if random number between 0 and 255 is less than 30 (for creating the mine)
+
+    JR C, _SetMine
+    ; else set MINEBIT to zero and draw a normal tile
+    RES MINEBIT, (IX)
+    JR _DrawCurrentTile
+_SetMine:
+    SET MINEBIT, (IX)  ; set mine bit of current tile
+    LD HL, totalMines ; Load address of totalMines variable to HL
+    INC (HL)
+    
+_DrawCurrentTile:
     ; Set up parameters for drawing tile
     ; A = index of tile sprite
-    ; D = row
-    ; E = column
-    LD B, 5
-    LD A, B
-    LD D, 5
-    LD E, 5
-    PUSH BC
+    ; D = tile row
+    ; E = tile column
+    PUSH BC ; save outer index
+    PUSH IX ; save address of current tile
+    LD A, COVERED_TILE ; set tile index to COVERED_TILE
     CALL DrawTile
+    POP IX ; get them back
     POP BC
-    
-    DEC B
 
-    LD A, B
-    LD D, 10
-    LD E, 10
-    CALL DrawTile
+    INC C
+    INC IX
+
+    LD A, C
+    CP BOARD_SIZE ; If C is at the end of the board list
+    JR NZ, InitializeLoop
+
+    LD A, (totalMines) ; Load address of flagsLeft variable to HL
+    LD (flagsLeft), A
+
+    ; Once mines have been set, copy graph buffer (much faster than drawing every loop)
+    b_call(_GrBufCpy)
 
 KeyLoop:
     b_call(_GetKey)
     CP      kClear     ; If the CLEAR key was pressed.
-    RET     Z
-    JR      KeyLoop
+    JR NZ, KeyLoop
 
-;---------------------------------------------------------------------
-; KeyLoop:
-;     b_call(_GetKey)
-;     CP      kUp        ; If the up arrow key was pressed.
-;     JR      Z, Up
-;     CP      kDown      ; If the down arrow key was pressed.
-;     JR      Z, Down
-;     CP      kLeft      ; If the down arrow key was pressed.
-;     JR      Z, Left
-;     CP      kRight     ; If the down arrow key was pressed.
-;     JR      Z, Right
-;     CP      kClear     ; If the CLEAR key was pressed.
-;     RET     Z
-;     JR      KeyLoop    ; If any other key was pressed, redo _GetKey.
-; Up:
-;     LD      A, (cursorY)
-;     ; CP      0        ; dont go up
-;     JR      Z, KeyLoop
-;     DEC     A
-;     LD      (cursorY), A
-;     JR      Draw    ; draw o
-; Down:
-;     LD      A, (cursorY)
-;     CP      7        ; dont go down if y is 7
-;     JR      Z, KeyLoop
-;     INC     A
-;     LD      (cursorY), A
-;     JR      Draw    ; draw o
-; Right:
-;     LD      A, (cursorX)
-;     CP      15        ; dont go right if x is 15
-;     JR      Z, KeyLoop
-;     INC     A
-;     LD      (cursorX), A
-;     JR      Draw    ; draw o
-; Left:
-;     LD      A, (cursorX)
-;     CP      0        ; dont go left if x is zero
-;     JR      Z, KeyLoop
-;     DEC     A
-;     LD      (cursorX), A
-;     JR      Draw    ; draw o
+    RET
+; ------------------- END MAIN --------------
 
+; Destroys A
+RowAndColFromIndex: ; C = index. Returns D = tile row, E = tile col
+    ; Get Row
+    LD A, C ; load index into A
+    SRL A
+    SRL A
+    SRL A
+    SRL A ; divide by 16 to get row
+    LD D, A ; load row into D
+    ; Get Col
+    LD A, C
+    AND 15 ; Mod 16 to get column
+    LD E, A ; load col into E
 
-DrawTile: ; A = index of tile sprite, D = row, E = column, B = index of tile from outer loop
-    LD HL, tiles ; load first tile location
-    
+    RET
+
+; D = tile row, E = tile column
+; Destroys HL
+TileToScreen: ; multiply row and col by 5 to get screen
+    LD H, D ; Load tile row into H
+    LD L, E ; Load tile col into L
+
+    ADD HL, DE ; HL = 2DE
+    ADD HL, DE ; HL = 3DE
+    ADD HL, DE ; HL = 4DE
+    ADD HL, DE ; HL = 5DE
+
+    EX DE, HL ; Swap DE and HL so that DE = 5DE
+
+    RET
+
+; D = screen row, E = screen column
+; Returns HL = screen byte offset, E = bit offset, Z = (E == 0)
+; Destroys HL, BC, A
+GetPixel:
+    LD H, 0
+    LD L, D ; HL = D
+    LD B, H
+    LD C, D ; BC = D
+    ; Multiply row by 12
+    ADD HL, HL ; HL = 2D
+    ADD HL, BC ; HL = 3D
+    ADD HL, HL ; HL = 6D
+    ADD HL, HL ; HL = 12D
+
+    LD C, E ; load column into C
+    SRL C
+    SRL C
+    SRL C ; divide by 8 to get the byte number (column byte) we want to draw to
+    ADD HL, BC ; HL = row * 12 + column = byte offset for screen
+; We now need the pixel start bit
+    LD A, E ; Load column into A
+    AND 7   ; Mod 8, if A is zero, set Z flag
+    LD E, A ; E = bit offset for screen byte to draw to
+
+    CP 0
+    RET
+
+DrawTile: ; A = index of tile sprite, D = tile row, E = tile column, B = index of tile from outer loop
     LD C, TILE_SIZE ; C is the counter for drawing each sprite lines
     PUSH BC ; saves the value of B and C so we can pop it off at the end
+    
+    LD HL, tiles ; load first tile location
 
     CP 0 ; If A (index of tile sprite) is 0 (covered tile) then
     JR Z, _SkipLoop ; Skip the multiplication loop
@@ -109,31 +162,20 @@ _TileIndexLoop:
     DJNZ _TileIndexLoop ; Offsets HL by index * TILE_SIZE
     POP DE
 _SkipLoop: ; At this point the correct index of the tile sprite is in HL
+    PUSH HL ; save tile address
     
-    LD A, D
-    ; Multiply row by 12
-    ADD    A, A ; A = 2D
-    ADD    A, D ; A = 3D
-    ADD    A, A ; A = 6D
-    ADD    A, A ; A = 12D
-
-    LD C, E ; load column into C
-    SRL C
-    SRL C
-    SRL C ; divide by 8 to get the byte number (column byte) we want to draw to
-    ADD A, C ; A = row * 12 + column = byte offset for screen
-    LD D, A ; load byte offset back into D
-; We now need the pixel start bit
-    LD A, E ; Load column into A
-    AND 7   ; Mod 8, if A is zero, set Z flag
-    LD E, A ; E = bit offset for screen byte to draw to
+    ; Make tile row and column into screen row and column for GetPixel procedure
+    CALL TileToScreen
+    CALL GetPixel
 
     LD IX, PlotSScreen ; load address of screen buffer
-    LD B, 0
-    LD C, D ; load byte offset for screen byte we want to draw to
+    
+    LD B, H ; load offset into BC
+    LD C, L
 
     ADD IX, BC ; add offset to PlotSScreen
     ; IX = address of screen bytes, D is free
+    POP HL ; load tile index back into HL
 
 ; Create the screen mask
     LD A, %11111111 ; right side of sprite
@@ -141,7 +183,7 @@ _SkipLoop: ; At this point the correct index of the tile sprite is in HL
     
     LD B, E ; Set counter to bit offset
 
-    JR NZ, _ScreenMaskLoop ; if bit offset is not zero, loop
+    JR _ScreenMaskLoop ; if bit offset is not zero, loop
 
     LD B, A
     PUSH BC ; C is LEFT SIDE of mask, B is RIGHT SIDE !VERY IMPORTANT!
@@ -151,6 +193,7 @@ _SkipLoop: ; At this point the correct index of the tile sprite is in HL
 _ScreenMaskLoop:
     RRC C ; C register is rotated to the right
     RRA   ; A register is rotated right and the previous carry flag is copied to bit 7
+    SET 7, C
     DJNZ _ScreenMaskLoop
 
     LD B, A
@@ -184,7 +227,6 @@ _SpriteShiftLoop:
     DJNZ _SpriteShiftLoop
 
 _SkipSpriteShiftLoop:
-
     ; A is right side, C is left
     ; OR each screen byte with each sprite byte and write values to buffer
     OR (IX + 1)
@@ -195,17 +237,18 @@ _SkipSpriteShiftLoop:
     ; Line has been draw!!!!!
     ; Draw another
 
-    POP AF ; AF contains the screen mask
+    LD A, E ; Load bit offset into A
+    POP DE ; DE now contains the screen mask
     POP BC ; B contains original tile index and C contains sprite line count
     DEC C
     PUSH BC ; decrement count and push it back onto stack
-    PUSH AF ; Push screen mask back onto stack
+    PUSH DE ; Push screen mask back onto stack
     
-    PUSH DE ; save bit offset
     LD DE, 12
     ADD IX, DE ; move screen byte down to operate on
     INC HL ; increment HL so sprite line is increased
-    POP DE ; get bit offset back
+    
+    LD E, A ; Load bit offset back into E
 
     LD A, C
     CP 0
@@ -215,16 +258,36 @@ _SkipSpriteShiftLoop:
     POP BC ; get screen mask off of stack
     POP BC ; returns B to original index value for outer loop
 
-    b_call(_GrBufCpy)
+    ; b_call(_GrBufCpy)
 
     RET
 
+Random: ; Gets a random number in A register, preserves every other register (not F though)
+    PUSH    HL
+    PUSH    DE
+    LD      HL,(seed)
+    LD      A,R
+    LD      D,A
+    LD      E,(HL)
+    ADD     HL,DE
+    ADD     A,L
+    XOR     H
+    LD      (seed),HL
+    POP     DE
+    POP     HL
+    RET
+    
 ; Usable bytes: 768
-board = AppBackUpScreen ; size = 16 * 12 = 192 bytes
-selector = AppBackUpScreen + 192 ; size = 1 (single byte representing offset of selected tile)
+board        = AppBackUpScreen       ; size = 16 * 12 = 192 bytes
+selector     = AppBackUpScreen + 192 ; size = 1 (single byte representing offset of selected tile)
+seed         = AppBackUpScreen + 193 ; single byte for seed to live
+totalMines   = AppBackUpScreen + 194 ; can only be 16*12=192 mines, less than 255
+flagsLeft    = AppBackUpScreen + 195 ; same size as totalMines
+coveredTiles = AppBackUpScreen + 196 ; same size as flagsLeft
+gameState    = AppBackUpScreen + 197 ; single byte with game flags
 
 tiles:
-    ; Covered Tile (0)
+    ; (0) ?? index of zero doesn't work
     .DB %11111000
     .DB %10000000
     .DB %10000000
@@ -296,5 +359,23 @@ tiles:
     .DB %11111000
     .DB %11111000
     .DB %11111000
+    ; Covered Tile (12)
+    .DB %11111000
+    .DB %10000000
+    .DB %10000000
+    .DB %10000000
+    .DB %10000000
+    ; Text 1 (17) (set and reset bit #4)
+    .DB %00100000
+    .DB %01100000
+    .DB %00100000
+    .DB %00100000
+    .DB %01110000
+    ; Text 2 (18) (set and reset bit #4)
+    .DB %00100000
+    .DB %01100000
+    .DB %00100000
+    .DB %00100000
+    .DB %01110000
 
 .END
