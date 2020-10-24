@@ -9,11 +9,18 @@
 
 #define MINE_TILE 9
 #define FLAG_TILE 10
-#define EMPTY_TILE 11
+#define BIG_FLAG_TILE 11
 #define COVERED_TILE 12
+#define OPEN_EYE_TILE 13
+#define DEAD_EYE_TILE 14
+#define SUNGLASSES_TILE 15
+#define LEFT_SMILE_TILE 26
+#define RIGHT_SMILE_TILE 27
+#define LEFT_SAD_TILE 28
+#define RIGHT_SAD_TILE 29
 
-#define IS_RUNNING 0
-#define LOST
+#define FACE_ROW 10
+#define FACE_COL 83
 
 .ORG    $9D93
 .DB     t2ByteTok, tAsmCmp ;I have no clue why but it breaks without this line
@@ -61,6 +68,7 @@ _DrawCurrentTile:
     ; E = tile column
     PUSH BC ; save outer index
     PUSH IX ; save address of current tile
+    CALL TileToScreen
     LD A, COVERED_TILE ; set tile index to COVERED_TILE
     CALL DrawTile
     POP IX ; get them back
@@ -73,9 +81,10 @@ _DrawCurrentTile:
     CP BOARD_SIZE ; If C is at the end of the board list
     JR NZ, InitializeLoop
 
-    LD A, (totalMines) ; Load address of flagsLeft variable to HL
+    LD A, (totalMines) ; Copy totalMines to flagsLeft
     LD (flagsLeft), A
 
+    CALL DrawEpicFace
     ; Once mines have been set, copy graph buffer (much faster than drawing every loop)
     b_call(_GrBufCpy)
 
@@ -145,7 +154,7 @@ GetPixel:
     CP 0
     RET
 
-DrawTile: ; A = index of tile sprite, D = tile row, E = tile column, B = index of tile from outer loop
+DrawTile: ; A = index of tile sprite, D = screen row, E = screen column, B = index of tile from outer loop
     LD C, TILE_SIZE ; C is the counter for drawing each sprite lines
     PUSH BC ; saves the value of B and C so we can pop it off at the end
     
@@ -164,8 +173,6 @@ _TileIndexLoop:
 _SkipLoop: ; At this point the correct index of the tile sprite is in HL
     PUSH HL ; save tile address
     
-    ; Make tile row and column into screen row and column for GetPixel procedure
-    CALL TileToScreen
     CALL GetPixel
 
     LD IX, PlotSScreen ; load address of screen buffer
@@ -276,7 +283,76 @@ Random: ; Gets a random number in A register, preserves every other register (no
     POP     DE
     POP     HL
     RET
-    
+
+DrawDeadFace:
+    LD A, DEAD_EYE_TILE
+    LD D, FACE_ROW
+    LD E, FACE_COL
+    CALL DrawTile
+
+    LD A, DEAD_EYE_TILE
+    LD D, FACE_ROW
+    LD E, FACE_COL + 6
+    CALL DrawTile
+
+    LD A, LEFT_SAD_TILE
+    LD D, FACE_ROW + 7
+    LD E, FACE_COL + 1
+    CALL DrawTile
+
+    LD A, RIGHT_SAD_TILE
+    LD D, FACE_ROW + 7
+    LD E, FACE_COL + 6
+    CALL DrawTile
+
+    RET
+
+DrawHappyFace:
+    LD A, OPEN_EYE_TILE
+    LD D, FACE_ROW
+    LD E, FACE_COL
+    CALL DrawTile
+
+    LD A, OPEN_EYE_TILE
+    LD D, FACE_ROW
+    LD E, FACE_COL + 5
+    CALL DrawTile
+
+    LD A, LEFT_SMILE_TILE
+    LD D, FACE_ROW + 7
+    LD E, FACE_COL + 1
+    CALL DrawTile
+
+    LD A, RIGHT_SMILE_TILE
+    LD D, FACE_ROW + 7
+    LD E, FACE_COL + 6
+    CALL DrawTile
+
+    RET
+
+DrawEpicFace:
+    LD A, SUNGLASSES_TILE
+    LD D, FACE_ROW
+    LD E, FACE_COL + 1
+    CALL DrawTile
+
+    LD A, SUNGLASSES_TILE
+    LD D, FACE_ROW
+    LD E, FACE_COL + 6
+    CALL DrawTile
+
+    LD A, LEFT_SMILE_TILE
+    LD D, FACE_ROW + 7
+    LD E, FACE_COL + 1
+    CALL DrawTile
+
+    LD A, RIGHT_SMILE_TILE
+    LD D, FACE_ROW + 7
+    LD E, FACE_COL + 6
+    CALL DrawTile
+
+    RET
+
 ; Usable bytes: 768
 board        = AppBackUpScreen       ; size = 16 * 12 = 192 bytes
 selector     = AppBackUpScreen + 192 ; size = 1 (single byte representing offset of selected tile)
@@ -287,12 +363,12 @@ coveredTiles = AppBackUpScreen + 196 ; same size as flagsLeft
 gameState    = AppBackUpScreen + 197 ; single byte with game flags
 
 tiles:
-    ; (0) ?? index of zero doesn't work
+    ; 0 (Empty tile)
     .DB %11111000
-    .DB %10000000
-    .DB %10000000
-    .DB %10000000
-    .DB %10000000
+    .DB %11111000
+    .DB %11111000
+    .DB %11111000
+    .DB %11111000
     ; 1
     .DB %11111000
     .DB %11101000
@@ -353,18 +429,36 @@ tiles:
     .DB %11000000
     .DB %11011000
     .DB %10001000
-    ; Empty Tile (11)
-    .DB %11111000
-    .DB %11111000
-    .DB %11111000
-    .DB %11111000
-    .DB %11111000
+    ; Big Flag (11)
+    .DB %01100000
+    .DB %01110000
+    .DB %01111000
+    .DB %01000000
+    .DB %11110000
     ; Covered Tile (12)
     .DB %11111000
     .DB %10000000
     .DB %10000000
     .DB %10000000
     .DB %10000000
+    ; Open Eye (13)
+    .DB %00000000
+    .DB %00110000
+    .DB %00110000
+    .DB %00000000
+    .DB %00000000
+    ; Dead Eye (14)
+    .DB %00000000
+    .DB %01010000
+    .DB %00100000
+    .DB %01010000
+    .DB %00000000
+    ; Sunglasses Eye (15)
+    .DB %00000000
+    .DB %11111000
+    .DB %11110000
+    .DB %01100000
+    .DB %00000000
     ; Text 0 (16) (set and reset bit #4)
     .DB %01110000
     .DB %01010000
@@ -425,11 +519,29 @@ tiles:
     .DB %01110000
     .DB %00010000
     .DB %00010000
-    ; Big Flag (26)
-    .DB %01100000
-    .DB %01110000
-    .DB %01111000
+    ; Left smile (26)
+    .DB %10000000
     .DB %01000000
-    .DB %11110000
+    .DB %00111000
+    .DB %00000000
+    .DB %00000000
+    ; Right smile (27)
+    .DB %00010000
+    .DB %00100000
+    .DB %11000000
+    .DB %00000000
+    .DB %00000000
+    ; Left sad face (28)
+    .DB %00111000
+    .DB %01000000
+    .DB %10000000
+    .DB %00000000
+    .DB %00000000
+    ; Right sad face (29)
+    .DB %11000000
+    .DB %00100000
+    .DB %00010000
+    .DB %00000000
+    .DB %00000000
 
 .END
