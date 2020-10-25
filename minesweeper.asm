@@ -130,6 +130,10 @@ KeyLoop:
 ; ------------------- END MAIN --------------
 
 Up:
+    LD A, (selector)
+    CP 16 ; if selector - 16 is negative, return back to key loop
+    RET C
+
     CALL FlipSelectedTile
     LD A, (selector) ; subtract width from selector (move up)
     SBC A, 16
@@ -139,6 +143,10 @@ Up:
     RET
 
 Down:
+    LD A, (selector)
+    CP BOARD_SIZE - 16 ; if selector - (BOARD_SIZE - 16) is positive, return back to key loop
+    RET NC
+
     CALL FlipSelectedTile
     LD A, (selector) ; add width to selector (move down)
     ADD A, 16
@@ -148,6 +156,11 @@ Down:
     RET
 
 Left:
+    LD A, (selector) ; subtract width from selector (move up)
+    AND 15 ; mod 16 to check where selector is in column
+    ; if selector col is zero, return back to key loop
+    RET Z
+
     CALL FlipSelectedTile
     LD HL, selector ; decrement selector (move left)
     DEC (HL)
@@ -156,6 +169,11 @@ Left:
     RET
 
 Right:
+    LD A, (selector) ; subtract width from selector (move up)
+    AND 15 ; mod 16 to check where selector is in column
+    CP 15 ; if selector col is zero, return back to key loop
+    RET Z
+
     CALL FlipSelectedTile
     LD HL, selector ; increment selector (move left)
     INC (HL)
