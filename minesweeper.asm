@@ -25,7 +25,11 @@
 #define FLAGS_ROW 32
 #define FLAGS_COL 83
 
+; Defines for game state bits
+; 0: is current tile the selector?
+; 1: is out of bounds?
 #define STATE_SELECTING 0
+#define STATE_OUTOFBOUNDS 1
 
 .ORG    $9D93
 .DB     t2ByteTok, tAsmCmp ;I have no clue why but it breaks without this line
@@ -64,13 +68,15 @@ InitializeLoop:
     CP 30 ; test if random number between 0 and 255 is less than 30 (for creating the mine)
 
     JR C, _SetMine
-    ; else set MINEBIT to zero and draw a normal tile
+    ; else reset MINEBIT and draw a normal tile
     RES MINEBIT, (IX)
+    LD A, COVERED_TILE
     JR _DrawCurrentTile
 _SetMine:
     SET MINEBIT, (IX)  ; set mine bit of current tile
     LD HL, totalMines ; Load address of totalMines variable to HL
     INC (HL)
+    LD A, MINE_TILE
     
 _DrawCurrentTile:
     ; Set up parameters for drawing tile
@@ -80,7 +86,7 @@ _DrawCurrentTile:
     PUSH BC ; save outer index
     PUSH IX ; save address of current tile
     CALL TileToScreen
-    LD A, COVERED_TILE ; set tile index to COVERED_TILE
+    ; LD A, COVERED_TILE ; set tile index to COVERED_TILE
     CALL DrawTile
     POP IX ; get them back
     POP BC
@@ -91,6 +97,49 @@ _DrawCurrentTile:
     LD A, C
     CP BOARD_SIZE ; If C is at the end of the board list
     JR NZ, InitializeLoop
+
+    ; JR SkipMineCountLoop
+;---------------------- Count surrounding mines ------------------
+
+    LD IX, board ; Load board address into index register
+    LD C, 0         ; Index of mine in board list
+
+MineCountLoop:
+    ; C = index
+    CALL CountSurrounding ; adds number of surrounding mines to tile at IX
+
+    ; Set up parameters for drawing tile
+    ; A = index of tile sprite
+    ; D = tile row
+    ; E = tile column
+    PUSH BC ; save outer index
+    PUSH IX ; save address of current 
+    CALL RowAndColFromIndex
+    CALL TileToScreen
+    LD A, (IX)
+    BIT MINEBIT, A
+    JR NZ, _DrawMine ; if tile is a mine, draw a mine
+    ; else:
+    AND 15 ; mod 16 to keep mine count (lower 4 bits)
+    ; A is already set to the number of surrounding mines, tile index is all set
+    CALL DrawTile
+    JR _Continue
+_DrawMine:
+    LD A, MINE_TILE
+    CALL DrawTile
+_Continue:
+    POP IX ; get them back
+    POP BC
+
+    INC C
+    INC IX
+
+    LD A, C
+    CP BOARD_SIZE ; If C is at the end of the board list
+    JR NZ, MineCountLoop
+; ------------------------End Mine count-------------
+
+SkipMineCountLoop:
 
     LD A, (totalMines) ; Copy totalMines to flagsLeft
     LD (flagsLeft), A
@@ -181,15 +230,89 @@ Right:
 
     RET
 
-DecrementFlags:
-    LD HL, flagsLeft
-    LD A, 0
-    ADD A, (HL)
-    INC A
-    LD (HL), A
+CountSurrounding: ; C is index of center tile, IX is actual tile address
+    ; offset is always in the range [-17, 17], but it's added to 16 bit values,
+    ; so we have to be careful when it's negative
+    ; Load desired constant offset into DE
+    ; This means if it's negative, DE = correct value in 16 bit 2's complement
+    ; If we need to use the 8 bit offset, just use the E register
+    LD DE, -17 
+    CALL _TestBlock ; C is not changed, IX is not changed, everyone is happy (except HL and DE)
+    LD DE, -16
+    CALL _TestBlock
+    LD DE, -15
+    CALL _TestBlock
+    LD DE, -1
+    CALL _TestBlock
+    LD DE, 1
+    CALL _TestBlock
+    LD DE, 15
+    CALL _TestBlock
+    LD DE, 16
+    CALL _TestBlock
+    LD DE, 17
+    CALL _TestBlock
 
-    CALL DisplayFlagsLeft
+    RET
 
+_TestBlock: ; C is index of center tile, DE is offset
+    CALL CheckBounds
+    LD HL, gameState
+    BIT STATE_OUTOFBOUNDS, (HL) ; check if CheckBounds procedure set out of bounds flag
+    RET NZ ; if Zero flag is reset, out of bounds is true, return
+
+    ; Now we need to move the tile address index stored in IX to the correct tile to check if it's a mine
+    PUSH IX ; Push IX to the stack
+    POP HL ; Pop it back into HL to do addition (might be a better way, but can't load IX directly into HL)
+    ADD HL, DE ; move tile address to correct checking tile
+
+    BIT MINEBIT, (HL) ; check if mine bit if set at current mine
+    RET Z ; if Zero flag is set, tile is not a mine, return and do not increment tile
+    INC (IX) ; increment count tile at IX (center tile)
+    
+    RET
+
+CheckBounds: ; C is index of tile, B is offset to check
+    LD HL, gameState
+    SET STATE_OUTOFBOUNDS, (HL) ; set the out of bounds flag, reset if not out of bounds
+; CheckRight:
+    LD A, C
+    AND 15 ; mod 16 on index
+    CP 15 ; if 15, we're on the right edge
+    JR NZ, _CheckLeft ; if not on right, check the left
+    ; else check if we're looking right
+    LD A, E
+    AND 15 ; mod 16 on offset
+    CP 1 ; if 1, we're looking to the right and looking right (bad)
+    RET Z ; return having set the out of bounds bit high
+
+_CheckLeft:
+    LD A, C
+    AND 15 ; mod 16 on index
+    ; if 0, we're on the left edge
+    JR NZ, _CheckUp ; if not on left, check up edge
+    ; else check if we're looking left
+    LD A, E
+    AND 15 ; mod 16 on offset
+    CP 15 ; if 15, we're looking to the left and looking left (bad)
+    RET Z ; return having set the out of bounds bit high
+
+_CheckUp:
+    LD A, C
+    ADD A, E ; add offset to index
+    ; if < 0, we're on the top looking up (bad)
+    CP 0
+    RET C
+; CheckDown:
+    ; A is already the sum of the index and the offset
+    CP BOARD_SIZE - 1
+    ; if >= BOARD_SIZE - 1, we're on the top looking up (bad)
+    RET NC
+
+    ; If we get to this point, we're in bounds, so reset the out of bounds flag
+    ; HL is still the address of the game state variable
+    RES STATE_OUTOFBOUNDS, (HL)
+    
     RET
 
 Uncover:
@@ -545,16 +668,16 @@ tiles:
     .DB %11111000
     ; 1
     .DB %11111000
-    .DB %11101000
-    .DB %11001000
-    .DB %11101000
-    .DB %11000000
+    .DB %11011000
+    .DB %10011000
+    .DB %11011000
+    .DB %10001000
     ; 2
     .DB %11111000
-    .DB %11001000
-    .DB %11110000
-    .DB %11001000
-    .DB %11000000
+    .DB %10011000
+    .DB %11101000
+    .DB %10011000
+    .DB %10001000
     ; 3
     .DB %11111000
     .DB %10001000
@@ -569,22 +692,22 @@ tiles:
     .DB %11101000
     ; 5
     .DB %11111000
-    .DB %11000000
-    .DB %11001000
-    .DB %11110000
-    .DB %11001000
+    .DB %10001000
+    .DB %10011000
+    .DB %11101000
+    .DB %10011000
     ; 6
     .DB %11111000
-    .DB %11100000
-    .DB %11011000
-    .DB %11000000
-    .DB %11100000
+    .DB %11001000
+    .DB %10111000
+    .DB %10001000
+    .DB %11001000
     ; 7
     .DB %11111000
-    .DB %11000000
-    .DB %11110000
+    .DB %10001000
     .DB %11101000
-    .DB %11101000
+    .DB %11011000
+    .DB %11011000
     ; 8
     .DB %11111000
     .DB %11001000
