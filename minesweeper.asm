@@ -22,13 +22,23 @@
 #define FACE_ROW 10
 #define FACE_COL 83
 
+#define FLAGS_ROW 32
+#define FLAGS_COL 83
+
+#define STATE_SELECTING 0
+
 .ORG    $9D93
 .DB     t2ByteTok, tAsmCmp ;I have no clue why but it breaks without this line
 
-;----------------------------- MAIN --------------------------
+; ---------------------------- MAIN --------------------------
     b_call(_RunIndicOff)
 
-    ; Clear screen
+
+; ----------------------- Clear screen -----------------------
+    LD A, 0
+    LD (totalMines), A
+    LD (selector), A
+
     LD BC, 12*64
     LD HL, PlotSScreen
 ClearScreen:
@@ -42,6 +52,7 @@ ClearScreen:
 
     LD IX, board ; Load board address into index register
     LD C, 0         ; Index of mine in board list
+; ----------------------- Initialize board -----------------------
 InitializeLoop:
     ; C = index
     LD (IX), 0 ; set the tile data at IX to zero
@@ -85,16 +96,105 @@ _DrawCurrentTile:
     LD (flagsLeft), A
 
     CALL DrawEpicFace
-    ; Once mines have been set, copy graph buffer (much faster than drawing every loop)
-    b_call(_GrBufCpy)
+    CALL DisplayFlagsLeft
+    
+    LD A, BIG_FLAG_TILE ; Draw big flag
+    LD D, FLAGS_ROW
+    LD E, FLAGS_COL
+    CALL DrawTile
+
+    ; Flip the selected tile, which copies the graph buffer (much faster than drawing every loop)
+    CALL FlipSelectedTile
+; ----------------------- End Initialize -----------------------
 
 KeyLoop:
     b_call(_GetKey)
-    CP      kClear     ; If the CLEAR key was pressed.
-    JR NZ, KeyLoop
+
+; Key procedures
+    CP kEnter     
+    CALL Z, Uncover
+
+    CP kUp    
+    CALL Z, Up
+    CP kDown  
+    CALL Z, Down
+    CP kLeft   
+    CALL Z, Left
+    CP kRight  
+    CALL Z, Right
+
+    CP kClear
+    RET Z
+    JR KeyLoop
+
+; ------------------- END MAIN --------------
+
+Up:
+    CALL FlipSelectedTile
+    LD A, (selector) ; subtract width from selector (move up)
+    SBC A, 16
+    LD (selector), A
+    CALL FlipSelectedTile
 
     RET
-; ------------------- END MAIN --------------
+
+Down:
+    CALL FlipSelectedTile
+    LD A, (selector) ; add width to selector (move down)
+    ADD A, 16
+    LD (selector), A
+    CALL FlipSelectedTile
+
+    RET
+
+Left:
+    CALL FlipSelectedTile
+    LD HL, selector ; decrement selector (move left)
+    DEC (HL)
+    CALL FlipSelectedTile
+
+    RET
+
+Right:
+    CALL FlipSelectedTile
+    LD HL, selector ; increment selector (move left)
+    INC (HL)
+    CALL FlipSelectedTile
+
+    RET
+
+DecrementFlags:
+    LD HL, flagsLeft
+    LD A, 0
+    ADD A, (HL)
+    INC A
+    LD (HL), A
+
+    CALL DisplayFlagsLeft
+
+    RET
+
+Uncover:
+; Flip selector tile
+    ; CALL FlipSelectedTile
+    NOP
+    RET
+
+FlipSelectedTile:
+    LD A, (selector) ; load selector into C (index of tile)
+    LD C, A
+    CALL RowAndColFromIndex
+    CALL TileToScreen
+    
+    LD HL, gameState 
+    SET STATE_SELECTING, (HL) ; Set the STATE_SELECTING bit of the game state so that the selected tile is flipped
+    CALL DrawTile ; D and E are set correctly, A (tile index) doesn't matter
+    LD HL, gameState
+    RES STATE_SELECTING, (HL) ; Reset selecting state bit so that other tiles are drawn normally
+    b_call(_GrBufCpy)
+
+    RET
+
 
 ; Destroys A
 RowAndColFromIndex: ; C = index. Returns D = tile row, E = tile col
@@ -190,7 +290,7 @@ _SkipLoop: ; At this point the correct index of the tile sprite is in HL
     
     LD B, E ; Set counter to bit offset
 
-    JR _ScreenMaskLoop ; if bit offset is not zero, loop
+    JR NZ, _ScreenMaskLoop ; if bit offset is not zero, loop
 
     LD B, A
     PUSH BC ; C is LEFT SIDE of mask, B is RIGHT SIDE !VERY IMPORTANT!
@@ -206,9 +306,36 @@ _ScreenMaskLoop:
     LD B, A
     PUSH BC ; C is LEFT SIDE of mask, B is RIGHT SIDE !VERY IMPORTANT!
 _DrawSpriteLine:
+
+    ; Check if tile address in HL is tile + 30
+    PUSH HL ; Save HL
+
+    LD HL, gameState
+    BIT STATE_SELECTING, (HL) ; Check if the selector tile is meant to be flipped
+
+    POP HL ; Get HL back
+
     POP BC
     ; B is right side, C is left
     ; Mask each screen byte with each mask byte and write values to buffer
+
+    JR Z, _NormalTile
+
+    ; If tile index is the selector, flip the bits at the location specified with XOR instead of AND
+    LD A, C
+    CPL
+    XOR (IX)
+    LD (IX), A
+    LD A, B
+    CPL
+    XOR (IX + 1)
+    LD (IX + 1), A
+
+    PUSH BC ; Push mask back onto stack for next line
+
+    JR _SkipNormalTile
+
+_NormalTile:
     LD A, C
     AND (IX)
     LD (IX), A
@@ -244,6 +371,8 @@ _SkipSpriteShiftLoop:
     ; Line has been draw!!!!!
     ; Draw another
 
+_SkipNormalTile:
+
     LD A, E ; Load bit offset into A
     POP DE ; DE now contains the screen mask
     POP BC ; B contains original tile index and C contains sprite line count
@@ -266,8 +395,8 @@ _SkipSpriteShiftLoop:
     POP BC ; returns B to original index value for outer loop
 
     ; b_call(_GrBufCpy)
-
     RET
+
 
 Random: ; Gets a random number in A register, preserves every other register (not F though)
     PUSH    HL
@@ -353,6 +482,33 @@ DrawEpicFace:
 
     RET
 
+DisplayFlagsLeft:
+    LD A, (flagsLeft)
+    LD B, 0
+_SubtractionLoop: ; Subtract 10 from A
+    INC B ; increment C
+    ADD A, 246 ; Two's complement of 10
+    JP P, _SubtractionLoop
+    ADD A, 10
+    DEC B ; Now C is the integer quotient of flagsLeft / 10, A is the remainder (flagsLeft % 10)
+    
+    PUSH BC ; save 10s place
+    SET 4, A ; A is the number we want in the ones place, so we set bit 4 to make it a large tile
+    LD D, FLAGS_ROW + 6
+    LD E, FLAGS_COL + 5
+    CALL DrawTile
+    
+    POP BC
+    LD A, B
+
+    SET 4, A ; A is the number we want in the ones place, so we set bit 4 to make it a large tile
+    LD D, FLAGS_ROW + 6
+    LD E, FLAGS_COL
+    CALL DrawTile
+    b_call(_GrBufCpy)
+
+    RET
+
 ; Usable bytes: 768
 board        = AppBackUpScreen       ; size = 16 * 12 = 192 bytes
 selector     = AppBackUpScreen + 192 ; size = 1 (single byte representing offset of selected tile)
@@ -363,7 +519,7 @@ coveredTiles = AppBackUpScreen + 196 ; same size as flagsLeft
 gameState    = AppBackUpScreen + 197 ; single byte with game flags
 
 tiles:
-    ; 0 (Empty tile)
+    ; 0 (Empty tile, selector tile)
     .DB %11111000
     .DB %11111000
     .DB %11111000
