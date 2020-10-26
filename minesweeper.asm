@@ -3,6 +3,7 @@
 #define MINEBIT 4
 #define COVEREDBIT 5
 #define FLAGBIT 6
+#define FLAGBITMASK 1 << FLAGBIT
 
 #define TILE_SIZE 5
 #define BOARD_SIZE 192
@@ -28,6 +29,7 @@
 ; Defines for game state bits
 ; 0: is current tile the selector?
 ; 1: is out of bounds?
+; 2: lost the game?
 #define STATE_SELECTING 0
 #define STATE_OUTOFBOUNDS 1
 
@@ -36,12 +38,13 @@
 
 ; ---------------------------- MAIN --------------------------
     b_call(_RunIndicOff)
-
-
+    
+Restart:
 ; ----------------------- Clear screen -----------------------
     LD A, 0
     LD (totalMines), A
     LD (selector), A
+    LD (gameState), A
 
     LD BC, 12*64
     LD HL, PlotSScreen
@@ -133,6 +136,9 @@ KeyLoop:
     CP kStat
     JP Z, Uncover
 
+    CP kPrgm
+    JP Z, Flag
+
     CP kUp    
     JR Z, Up
     CP kDown  
@@ -144,6 +150,7 @@ KeyLoop:
 
     CP kClear
     RET Z
+
     JR KeyLoop
 
 ; ------------------- END MAIN --------------
@@ -276,8 +283,8 @@ _CheckUp:
     RET C
 ; CheckDown:
     ; A is already the sum of the index and the offset
-    CP BOARD_SIZE - 1
-    ; if >= BOARD_SIZE - 1, we're on the top looking up (bad)
+    CP BOARD_SIZE
+    ; if > BOARD_SIZE, we're on the top looking up (bad)
     RET NC
 
     ; If we get to this point, we're in bounds, so reset the out of bounds flag
@@ -321,10 +328,9 @@ Uncover:
     AND 15 ; mod 16 again to get count
     CP 0
     CALL Z, UncoverRecursive ; if count is zero (empty tile), call UncoverRecursive
-    
 
-    ; BIT MINEBIT, (IX) ; check if uncovered tile is a mine
-    ; JR NZ, LoseGame
+    BIT MINEBIT, (IX) ; check if uncovered tile is a mine
+    JP NZ, LoseGame
 
     ; if we're here, do nothing, go back to key loop
     JP KeyLoop
@@ -443,13 +449,73 @@ _UncoverTestBlock: ; DE is offset, C is index, IX is center address
     CALL Z, UncoverRecursive
     RET
 
+Flag:
+    LD A, (selector)
+    LD B, 0
+    LD C, A ; load selected index into BC
+    LD IX, board
+    ADD IX, BC ; Get address of selected tile
+
+    ; Draw tile and flip flag bit
+    CALL RowAndColFromIndex
+    CALL TileToScreen
+
+    BIT FLAGBIT, (IX)
+    JR Z, _SetFlag ; if tile isn't a flag, set it
+    LD A, COVERED_TILE ; else, reset flag bit and draw covered tile
+    RES FLAGBIT, (IX)
+    JR _DrawFlagTile
+_SetFlag:
+    LD A, FLAG_TILE
+    SET FLAGBIT, (IX)
+
+_DrawFlagTile:
+    CALL DrawTile
+
+    CALL FlipSelectedTile
+
+    JP KeyLoop
+
 LoseGame:
 ; TODO:
 ;   Uncover all mines
 ;   Set losing flag in gameState variable
     CALL DrawDeadFace
+
+    LD IX, board ; Load board address into index register
+    LD C, 0         ; Index of mine in board list
+_DisplayAllMinesLoop:
+    ; C = index
+    BIT MINEBIT, (IX)
+    JR Z, _Continue ; if tile at IX is not a mine, do nothing
+
+    PUSH IX
+    PUSH BC
+    CALL RowAndColFromIndex
+    CALL TileToScreen
+    LD A, MINE_TILE
+    CALL DrawTile
+    POP BC
+    POP IX
+
+_Continue:
+
+    INC C
+    INC IX
+
+    LD A, C
+    CP BOARD_SIZE ; If C is at the end of the board list
+    JR NZ, _DisplayAllMinesLoop
+
     b_call(_GrBufCpy)
-    RET
+    
+_RestartLoop:
+    b_call(_GetKey)
+
+    CP kEnter ; if you pressed enter, restart
+    JP Z, Restart
+
+    JP _RestartLoop
 
 FlipSelectedTile:
     LD A, (selector) ; load selector into C (index of tile)
@@ -851,11 +917,11 @@ tiles:
     .DB %11000000
     .DB %10101000
     ; Flag Tile (10)
-    .DB %11111000
-    .DB %11001000
-    .DB %11000000
-    .DB %11011000
-    .DB %10001000
+    .DB %10000000
+    .DB %00110000
+    .DB %00111000
+    .DB %00100000
+    .DB %01110000
     ; Big Flag (11)
     .DB %01100000
     .DB %01110000
