@@ -70,13 +70,11 @@ InitializeLoop:
     JR C, _SetMine
     ; else reset MINEBIT and draw a normal tile
     RES MINEBIT, (IX)
-    LD A, COVERED_TILE
     JR _DrawCurrentTile
 _SetMine:
     SET MINEBIT, (IX)  ; set mine bit of current tile
     LD HL, totalMines ; Load address of totalMines variable to HL
     INC (HL)
-    LD A, MINE_TILE
     
 _DrawCurrentTile:
     ; Set up parameters for drawing tile
@@ -86,7 +84,7 @@ _DrawCurrentTile:
     PUSH BC ; save outer index
     PUSH IX ; save address of current tile
     CALL TileToScreen
-    ; LD A, COVERED_TILE ; set tile index to COVERED_TILE
+    LD A, COVERED_TILE ; set tile index to COVERED_TILE
     CALL DrawTile
     POP IX ; get them back
     POP BC
@@ -98,38 +96,12 @@ _DrawCurrentTile:
     CP BOARD_SIZE ; If C is at the end of the board list
     JR NZ, InitializeLoop
 
-    ; JR SkipMineCountLoop
 ;---------------------- Count surrounding mines ------------------
-
     LD IX, board ; Load board address into index register
     LD C, 0         ; Index of mine in board list
-
 MineCountLoop:
     ; C = index
     CALL CountSurrounding ; adds number of surrounding mines to tile at IX
-
-    ; Set up parameters for drawing tile
-    ; A = index of tile sprite
-    ; D = tile row
-    ; E = tile column
-    PUSH BC ; save outer index
-    PUSH IX ; save address of current 
-    CALL RowAndColFromIndex
-    CALL TileToScreen
-    LD A, (IX)
-    BIT MINEBIT, A
-    JR NZ, _DrawMine ; if tile is a mine, draw a mine
-    ; else:
-    AND 15 ; mod 16 to keep mine count (lower 4 bits)
-    ; A is already set to the number of surrounding mines, tile index is all set
-    CALL DrawTile
-    JR _Continue
-_DrawMine:
-    LD A, MINE_TILE
-    CALL DrawTile
-_Continue:
-    POP IX ; get them back
-    POP BC
 
     INC C
     INC IX
@@ -139,12 +111,10 @@ _Continue:
     JR NZ, MineCountLoop
 ; ------------------------End Mine count-------------
 
-SkipMineCountLoop:
-
     LD A, (totalMines) ; Copy totalMines to flagsLeft
     LD (flagsLeft), A
 
-    CALL DrawEpicFace
+    CALL DrawHappyFace
     CALL DisplayFlagsLeft
     
     LD A, BIG_FLAG_TILE ; Draw big flag
@@ -160,17 +130,17 @@ KeyLoop:
     b_call(_GetKey)
 
 ; Key procedures
-    CP kEnter     
-    CALL Z, Uncover
+    CP kStat
+    JP Z, Uncover
 
     CP kUp    
-    CALL Z, Up
+    JR Z, Up
     CP kDown  
-    CALL Z, Down
+    JR Z, Down
     CP kLeft   
-    CALL Z, Left
+    JR Z, Left
     CP kRight  
-    CALL Z, Right
+    JR Z, Right
 
     CP kClear
     RET Z
@@ -181,7 +151,7 @@ KeyLoop:
 Up:
     LD A, (selector)
     CP 16 ; if selector - 16 is negative, return back to key loop
-    RET C
+    JR C, KeyLoop
 
     CALL FlipSelectedTile
     LD A, (selector) ; subtract width from selector (move up)
@@ -189,12 +159,12 @@ Up:
     LD (selector), A
     CALL FlipSelectedTile
 
-    RET
+    JR KeyLoop
 
 Down:
     LD A, (selector)
     CP BOARD_SIZE - 16 ; if selector - (BOARD_SIZE - 16) is positive, return back to key loop
-    RET NC
+    JR NC, KeyLoop
 
     CALL FlipSelectedTile
     LD A, (selector) ; add width to selector (move down)
@@ -202,33 +172,33 @@ Down:
     LD (selector), A
     CALL FlipSelectedTile
 
-    RET
+    JR KeyLoop
 
 Left:
     LD A, (selector) ; subtract width from selector (move up)
     AND 15 ; mod 16 to check where selector is in column
     ; if selector col is zero, return back to key loop
-    RET Z
+    JR Z, KeyLoop
 
     CALL FlipSelectedTile
     LD HL, selector ; decrement selector (move left)
     DEC (HL)
     CALL FlipSelectedTile
 
-    RET
+    JR KeyLoop
 
 Right:
     LD A, (selector) ; subtract width from selector (move up)
     AND 15 ; mod 16 to check where selector is in column
     CP 15 ; if selector col is zero, return back to key loop
-    RET Z
+    JR Z, KeyLoop
 
     CALL FlipSelectedTile
     LD HL, selector ; increment selector (move left)
     INC (HL)
     CALL FlipSelectedTile
 
-    RET
+    JR KeyLoop
 
 CountSurrounding: ; C is index of center tile, IX is actual tile address
     ; offset is always in the range [-17, 17], but it's added to 16 bit values,
@@ -237,25 +207,25 @@ CountSurrounding: ; C is index of center tile, IX is actual tile address
     ; This means if it's negative, DE = correct value in 16 bit 2's complement
     ; If we need to use the 8 bit offset, just use the E register
     LD DE, -17 
-    CALL _TestBlock ; C is not changed, IX is not changed, everyone is happy (except HL and DE)
+    CALL _BoundsTestBlock ; C is not changed, IX is not changed, everyone is happy (except HL and DE)
     LD DE, -16
-    CALL _TestBlock
+    CALL _BoundsTestBlock
     LD DE, -15
-    CALL _TestBlock
+    CALL _BoundsTestBlock
     LD DE, -1
-    CALL _TestBlock
+    CALL _BoundsTestBlock
     LD DE, 1
-    CALL _TestBlock
+    CALL _BoundsTestBlock
     LD DE, 15
-    CALL _TestBlock
+    CALL _BoundsTestBlock
     LD DE, 16
-    CALL _TestBlock
+    CALL _BoundsTestBlock
     LD DE, 17
-    CALL _TestBlock
+    CALL _BoundsTestBlock
 
     RET
 
-_TestBlock: ; C is index of center tile, DE is offset
+_BoundsTestBlock: ; C is index of center tile, DE is offset
     CALL CheckBounds
     LD HL, gameState
     BIT STATE_OUTOFBOUNDS, (HL) ; check if CheckBounds procedure set out of bounds flag
@@ -272,7 +242,8 @@ _TestBlock: ; C is index of center tile, DE is offset
     
     RET
 
-CheckBounds: ; C is index of tile, B is offset to check
+; Destroys HL, A
+CheckBounds: ; C is index of tile, DE is offset to check
     LD HL, gameState
     SET STATE_OUTOFBOUNDS, (HL) ; set the out of bounds flag, reset if not out of bounds
 ; CheckRight:
@@ -316,9 +287,168 @@ _CheckUp:
     RET
 
 Uncover:
-; Flip selector tile
-    ; CALL FlipSelectedTile
-    NOP
+    LD A, (selector)
+    LD B, 0
+    LD C, A ; load selected index into BC
+    LD IX, board
+    ADD IX, BC ; Get address of selected tile
+
+    LD A, (IX)
+
+    BIT COVEREDBIT, A ; check if selected tile is covered
+    JP Z, KeyLoop ; if not covered, do nothing
+
+    BIT FLAGBIT, A ; check if selected tile is flagged
+    JP NZ, KeyLoop ; if it is, do nothing
+
+    ; Uncover tile
+    RES COVEREDBIT, (IX)
+    PUSH BC ; save selected index
+    PUSH IX ; save selected address
+    CALL RowAndColFromIndex
+    CALL TileToScreen
+    POP IX
+    LD A, (IX)
+    AND 15 ; mod 16 for number to get count
+    PUSH IX
+    ; Now A is the count (the correct tile to be drawn)
+    CALL DrawTile
+    CALL FlipSelectedTile ; (copies graph buffer)
+    POP IX ; get selected address back
+    POP BC ; get selected index back
+
+    LD A, (IX)
+    AND 15 ; mod 16 again to get count
+    CP 0
+    CALL Z, UncoverRecursive ; if count is zero (empty tile), call UncoverRecursive
+    
+
+    ; BIT MINEBIT, (IX) ; check if uncovered tile is a mine
+    ; JR NZ, LoseGame
+
+    ; if we're here, do nothing, go back to key loop
+    JP KeyLoop
+
+UncoverRecursive: ; C is selected index, IX is selected address
+    ; For each of the test blocks around the center, push IX to save center,
+    ; test around it, pop it back
+    LD DE, -17
+    PUSH IX
+    PUSH BC
+    CALL _UncoverTestBlock
+    POP BC
+    POP IX
+
+    LD DE, -16
+    PUSH IX
+    PUSH BC
+    CALL _UncoverTestBlock
+    POP BC
+    POP IX
+    
+    LD DE, -15
+    PUSH IX
+    PUSH BC
+    CALL _UncoverTestBlock
+    POP BC
+    POP IX
+    
+    LD DE, -1
+    PUSH IX
+    PUSH BC
+    CALL _UncoverTestBlock
+    POP BC
+    POP IX
+
+    LD DE, 1
+    PUSH IX
+    PUSH BC
+    CALL _UncoverTestBlock
+    POP BC
+    POP IX
+
+    LD DE, 15
+    PUSH IX
+    PUSH BC
+    CALL _UncoverTestBlock
+    POP BC
+    POP IX
+
+    LD DE, 16
+    PUSH IX
+    PUSH BC
+    CALL _UncoverTestBlock
+    POP BC
+    POP IX
+
+    LD DE, 17
+    PUSH IX
+    PUSH BC
+    CALL _UncoverTestBlock
+    POP BC
+    POP IX
+
+    RET
+
+_UncoverTestBlock: ; DE is offset, C is index, IX is center address
+    CALL CheckBounds
+    LD HL, gameState
+    BIT STATE_OUTOFBOUNDS, (HL) ; check if CheckBounds procedure set out of bounds flag
+    RET NZ ; if Zero flag is reset, out of bounds is true, return
+
+    ; Now we need to move the tile address index stored in IX to the correct tile to check if it's a mine
+    
+    ADD IX, DE ; move tile address to correct checking tile
+
+    LD A, C
+    ADD A, E
+    LD C, A
+
+    ; IX is now the test address
+    ; C is now the test index
+
+    BIT FLAGBIT, (IX) ; check if flag bit is set at current tile
+    RET NZ ; if Zero flag is set, tile is flagged mine, return
+    
+    BIT COVEREDBIT, (IX) ; check if tile is covered
+    RET Z ; return if uncovered already
+
+    ; Uncover tile
+    RES COVEREDBIT, (IX)
+    PUSH BC ; save selected index
+    PUSH DE ; save offset
+    PUSH IX ; save test address
+    CALL RowAndColFromIndex ; C -> DE as tile coords
+    CALL TileToScreen ; DE -> DE as screen coords
+    LD A, (IX)
+    AND 15 ; mod 16 for number to get count
+    ; Now A is the count (the correct tile to be drawn)
+    CALL DrawTile
+    b_call(_GrBufCpy)
+    ; b_call(_GrBufCpy) ; take this out to make it faster
+    POP IX ; get selected address back
+    POP DE ; get offset back
+    POP BC ; get selected index back
+
+    LD HL, coveredTiles ; decrement covered tiles
+    DEC (HL)
+
+    LD A, (IX)
+    AND 15
+    CP 0 ; if tile we're checking is not zero, return
+
+    RET NZ
+    ; else, call uncover recursive with the test tile as the center
+
+    CALL Z, UncoverRecursive
+    RET
+
+LoseGame:
+; TODO:
+;   Uncover all mines
+;   Set losing flag in gameState variable
+    CALL DrawDeadFace
+    b_call(_GrBufCpy)
     RET
 
 FlipSelectedTile:
