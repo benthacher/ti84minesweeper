@@ -59,13 +59,14 @@ ClearScreen:
 
     LD IX, board ; Load board address into index register
     LD C, 0         ; Index of mine in board list
+
 ; ----------------------- Initialize board -----------------------
 InitializeLoop:
     ; C = index
     LD (IX), 0 ; set the tile data at IX to zero
     SET COVEREDBIT, (IX) ; cover the tile at IX
 
-    CALL RowAndColFromIndex ; D and E are now tile row and col
+    CALL RowAndColFromIndex ; D and E are now tile row and col    
     ; Get Random number
     CALL Random ; Random number stored in A
     CP 30 ; test if random number between 0 and 255 is less than 30 (for creating the mine)
@@ -73,12 +74,13 @@ InitializeLoop:
     JR C, _SetMine
     ; else reset MINEBIT and draw a normal tile
     RES MINEBIT, (IX)
+
     JR _DrawCurrentTile
 _SetMine:
     SET MINEBIT, (IX)  ; set mine bit of current tile
     LD HL, totalMines ; Load address of totalMines variable to HL
     INC (HL)
-    
+
 _DrawCurrentTile:
     ; Set up parameters for drawing tile
     ; A = index of tile sprite
@@ -102,6 +104,7 @@ _DrawCurrentTile:
 ;---------------------- Count surrounding mines ------------------
     LD IX, board ; Load board address into index register
     LD C, 0         ; Index of mine in board list
+
 MineCountLoop:
     ; C = index
     CALL CountSurrounding ; adds number of surrounding mines to tile at IX
@@ -464,15 +467,26 @@ Flag:
     JR Z, _SetFlag ; if tile isn't a flag, set it
     LD A, COVERED_TILE ; else, reset flag bit and draw covered tile
     RES FLAGBIT, (IX)
+
+    ; Increment flags left
+    LD HL, flagsLeft
+    INC (HL)
+
     JR _DrawFlagTile
 _SetFlag:
     LD A, FLAG_TILE
     SET FLAGBIT, (IX)
 
+    ; Decrement flags left
+    LD HL, flagsLeft
+    DEC (HL)
+
 _DrawFlagTile:
     CALL DrawTile
 
     CALL FlipSelectedTile
+
+    CALL DisplayFlagsLeft
 
     JP KeyLoop
 
@@ -849,11 +863,11 @@ _SubtractionLoop: ; Subtract 10 from A
 ; Usable bytes: 768
 board        = AppBackUpScreen       ; size = 16 * 12 = 192 bytes
 selector     = AppBackUpScreen + 192 ; size = 1 (single byte representing offset of selected tile)
-seed         = AppBackUpScreen + 193 ; single byte for seed to live
-totalMines   = AppBackUpScreen + 194 ; can only be 16*12=192 mines, less than 255
-flagsLeft    = AppBackUpScreen + 195 ; same size as totalMines
-coveredTiles = AppBackUpScreen + 196 ; same size as flagsLeft
-gameState    = AppBackUpScreen + 197 ; single byte with game flags
+seed         = AppBackUpScreen + 193 ; 2 bytes for seed to live
+totalMines   = AppBackUpScreen + 195 ; can only be 16*12=192 mines, less than 255
+flagsLeft    = AppBackUpScreen + 196 ; same size as totalMines
+coveredTiles = AppBackUpScreen + 197 ; same size as flagsLeft
+gameState    = AppBackUpScreen + 198 ; single byte with game flags
 
 tiles:
     ; 0 (Empty tile, selector tile)

@@ -9,3 +9,4 @@
 - [x] Counting Surrounding mines in initialize loop
 - [x] Recursive uncovering (test copying buffer each draw for this to see how it looks)
 - [x] Losing, Uncover all mines when you lose
+- [ ] Winning
