@@ -32,19 +32,24 @@
 ; 2: lost the game?
 #define STATE_SELECTING 0
 #define STATE_OUTOFBOUNDS 1
+#define STATE_LOSTGAME 2
+#define STATE_WONGAME 3
 
 .ORG    $9D93
-.DB     t2ByteTok, tAsmCmp ;I have no clue why but it breaks without this line
+.DB     $BB,$6D
 
 ; ---------------------------- MAIN --------------------------
     b_call(_RunIndicOff)
-    
+    bcall(_DisableApd)
+
 Restart:
 ; ----------------------- Clear screen -----------------------
     LD A, 0
     LD (totalMines), A
     LD (selector), A
     LD (gameState), A
+    LD A, BOARD_SIZE
+    LD (coveredTiles), A
 
     LD BC, 12*64
     LD HL, PlotSScreen
@@ -69,7 +74,8 @@ InitializeLoop:
     CALL RowAndColFromIndex ; D and E are now tile row and col    
     ; Get Random number
     CALL Random ; Random number stored in A
-    CP 30 ; test if random number between 0 and 255 is less than 30 (for creating the mine)
+    
+    CP 4 ; test if random number between 0 and 255 is less than 30 (for creating the mine)
 
     JR C, _SetMine
     ; else reset MINEBIT and draw a normal tile
@@ -133,6 +139,24 @@ MineCountLoop:
 ; ----------------------- End Initialize -----------------------
 
 KeyLoop:
+    ; Check game state
+    LD HL, gameState
+    BIT STATE_LOSTGAME, (HL)
+    JR NZ, _LostGame ; if we've lost, jump to _LostGame
+
+    BIT STATE_WONGAME, (HL) ; if we've won, jump to _WonGame
+    JR NZ, _WonGame
+    JR _ContinueGame ; else just continue getting key input
+
+_LostGame:
+    CALL LoseGame
+    JP Restart
+
+_WonGame:
+    CALL WinGame
+    JP Restart
+
+_ContinueGame:
     b_call(_GetKey)
 
 ; Key procedures
@@ -144,15 +168,18 @@ KeyLoop:
 
     CP kUp    
     JR Z, Up
+
     CP kDown  
     JR Z, Down
+    
     CP kLeft   
     JR Z, Left
+    
     CP kRight  
     JR Z, Right
 
     CP kClear
-    RET Z
+    JP Z, Done
 
     JR KeyLoop
 
@@ -195,20 +222,20 @@ Left:
     DEC (HL)
     CALL FlipSelectedTile
 
-    JR KeyLoop
+    JP KeyLoop
 
 Right:
     LD A, (selector) ; subtract width from selector (move up)
     AND 15 ; mod 16 to check where selector is in column
     CP 15 ; if selector col is zero, return back to key loop
-    JR Z, KeyLoop
+    JP Z, KeyLoop
 
     CALL FlipSelectedTile
     LD HL, selector ; increment selector (move left)
     INC (HL)
     CALL FlipSelectedTile
 
-    JR KeyLoop
+    JP KeyLoop
 
 CountSurrounding: ; C is index of center tile, IX is actual tile address
     ; offset is always in the range [-17, 17], but it's added to 16 bit values,
@@ -297,6 +324,9 @@ _CheckUp:
     RET
 
 Uncover:
+
+    CALL DisplayFlagsLeft
+    
     LD A, (selector)
     LD B, 0
     LD C, A ; load selected index into BC
@@ -306,10 +336,10 @@ Uncover:
     LD A, (IX)
 
     BIT COVEREDBIT, A ; check if selected tile is covered
-    JP Z, KeyLoop ; if not covered, do nothing
+    JP Z, KeyLoop ; if not covered, return
 
     BIT FLAGBIT, A ; check if selected tile is flagged
-    JP NZ, KeyLoop ; if it is, do nothing
+    JP NZ, KeyLoop ; if it is, return
 
     ; Uncover tile
     RES COVEREDBIT, (IX)
@@ -324,6 +354,10 @@ Uncover:
     ; Now A is the count (the correct tile to be drawn)
     CALL DrawTile
     CALL FlipSelectedTile ; (copies graph buffer)
+
+    LD HL, coveredTiles
+    DEC (HL) ; decrement coveredTiles
+
     POP IX ; get selected address back
     POP BC ; get selected index back
 
@@ -331,11 +365,15 @@ Uncover:
     AND 15 ; mod 16 again to get count
     CP 0
     CALL Z, UncoverRecursive ; if count is zero (empty tile), call UncoverRecursive
-
+    b_call(_GrBufCpy) ; Draw the newly uncovered tiles
     BIT MINEBIT, (IX) ; check if uncovered tile is a mine
-    JP NZ, LoseGame
+    ; if uncovered tile isn't a mine, just return
+    JP Z, KeyLoop
 
-    ; if we're here, do nothing, go back to key loop
+    ; else, set the lost bit in the gameState
+    LD HL, gameState
+    SET STATE_LOSTGAME, (HL)
+    
     JP KeyLoop
 
 UncoverRecursive: ; C is selected index, IX is selected address
@@ -403,6 +441,7 @@ _UncoverTestBlock: ; DE is offset, C is index, IX is center address
     CALL CheckBounds
     LD HL, gameState
     BIT STATE_OUTOFBOUNDS, (HL) ; check if CheckBounds procedure set out of bounds flag
+    RES STATE_OUTOFBOUNDS, (HL) ; reset the out of bounds state flag no matter what
     RET NZ ; if Zero flag is reset, out of bounds is true, return
 
     ; Now we need to move the tile address index stored in IX to the correct tile to check if it's a mine
@@ -433,14 +472,29 @@ _UncoverTestBlock: ; DE is offset, C is index, IX is center address
     AND 15 ; mod 16 for number to get count
     ; Now A is the count (the correct tile to be drawn)
     CALL DrawTile
-    b_call(_GrBufCpy)
-    ; b_call(_GrBufCpy) ; take this out to make it faster
+    b_call(_GrBufCpy) ; take this out to make it faster
+
+    CALL DisplayFlagsLeft
+
+    LD A, (coveredTiles)
+    DEC A ; decrement covered tiles
+    LD (coveredTiles), A ; store coveredTiles and keep it in A to compare with totalMines
+
+    ; --------- Compare coveredTiles to totalMines to check if player has won ----------
+
+    LD B, A ; copy coveredTiles over to B
+    LD A, (totalMines) ; load totalMines into A
+    CP B ; check if equal
+    JR NZ, _ContinueUncover ; if not equal, jump to continue uncover
+
+    ; else, set the wongame flag
+    LD HL, gameState
+    SET STATE_WONGAME, (HL) ; set the won game bit
+
+_ContinueUncover:
     POP IX ; get selected address back
     POP DE ; get offset back
     POP BC ; get selected index back
-
-    LD HL, coveredTiles ; decrement covered tiles
-    DEC (HL)
 
     LD A, (IX)
     AND 15
@@ -458,6 +512,9 @@ Flag:
     LD C, A ; load selected index into BC
     LD IX, board
     ADD IX, BC ; Get address of selected tile
+
+    BIT COVEREDBIT, (IX) ; check if the selected tile is covered
+    JP Z, KeyLoop ; if it's not covered, just return and don't add a flag
 
     ; Draw tile and flip flag bit
     CALL RowAndColFromIndex
@@ -490,10 +547,13 @@ _DrawFlagTile:
 
     JP KeyLoop
 
+WinGame:
+    CALL DrawEpicFace
+    b_call(_GrBufCpy)
+    
+    JR _RestartLoop ; wait for input before restarting
+
 LoseGame:
-; TODO:
-;   Uncover all mines
-;   Set losing flag in gameState variable
     CALL DrawDeadFace
 
     LD IX, board ; Load board address into index register
@@ -526,8 +586,18 @@ _Continue:
 _RestartLoop:
     b_call(_GetKey)
 
-    CP kEnter ; if you pressed enter, restart
-    JP Z, Restart
+    CP kUp ; if you pressed action key, restart
+    RET Z
+    CP kDown
+    RET Z
+    CP kLeft
+    RET Z
+    CP kRight
+    RET Z
+    CP kPrgm
+    RET Z
+    CP kStat
+    RET Z
 
     JP _RestartLoop
 
@@ -834,7 +904,7 @@ DrawEpicFace:
     RET
 
 DisplayFlagsLeft:
-    LD A, (flagsLeft)
+    LD A, (coveredTiles)
     LD B, 0
 _SubtractionLoop: ; Subtract 10 from A
     INC B ; increment C
@@ -868,6 +938,7 @@ totalMines   = AppBackUpScreen + 195 ; can only be 16*12=192 mines, less than 25
 flagsLeft    = AppBackUpScreen + 196 ; same size as totalMines
 coveredTiles = AppBackUpScreen + 197 ; same size as flagsLeft
 gameState    = AppBackUpScreen + 198 ; single byte with game flags
+stack        = AppBackUpScreen + 199 ; 2 bytes to store SP at program start
 
 tiles:
     ; 0 (Empty tile, selector tile)
@@ -1051,4 +1122,12 @@ tiles:
     .DB %00000000
     .DB %00000000
 
+Done:
+    ; bcall(_EnableApd)
+    ; bcall(_HomeUp)
+    ; bcall(_ClrScrn)
+    ; bcall(_ClrScrnFull)
+    RET
+
+.END
 .END

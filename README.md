@@ -10,3 +10,4 @@
 - [x] Recursive uncovering (test copying buffer each draw for this to see how it looks)
 - [x] Losing, Uncover all mines when you lose
 - [ ] Winning
+- [ ] Not crashing
